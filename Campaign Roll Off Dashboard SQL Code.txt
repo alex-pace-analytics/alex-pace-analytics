@@ -1,0 +1,297 @@
+-- ============================================================================
+-- CRO (Churn Reduction Offer) Dashboard - Customer Revenue Lifecycle Analysis
+-- ============================================================================
+-- This query builds a dashboard table tracking customer revenue changes across
+-- multiple months (M-1 through M3) relative to their CRO month, incorporating
+-- step-up pricing tests, PSU (product/service unit) migrations, and customer
+-- segmentation for A/B testing analysis.
+--
+-- NOTE: This is a sanitized version for public sharing.
+-- All database paths, campaign codes, segment identifiers, and proprietary
+-- business logic values have been replaced with generic placeholders.
+-- ============================================================================
+
+CREATE OR REPLACE TABLE target_db.target_schema.cro_dashboard AS
+
+SELECT
+    score.daily_time_key AS "Step Up Value Check Date",
+    crl.customer_key AS "Customer Key",
+    TO_DATE(crl.cro_month) AS "CRO Month",
+    crl.cro_type,
+    crl.cro_depth_amount,
+    crl.total_net_mrc AS "Total Net MRC",
+    crl.total_campaign_discount_amount AS "Total Campaign Discount Amount",
+    crl.revenue_status,
+    crl.revenue_change_amount,
+    crl.lm_total_net_mrc AS "M-1 Total Net MRC",
+    crl.m1_total_net_mrc AS "M1 Total Net MRC",
+    crl.m2_total_net_mrc AS "M2 Total Net MRC",
+    crl.m3_total_net_mrc AS "M3 Total Net MRC",
+    crl.lifecycle,
+    crl.lm_lifecycle,
+    crl.cro_status,
+    crl.m1_stepup_customer_flag,
+    crl.m1_cro_status,
+    crl.m2_stepup_customer_flag,
+    crl.m2_cro_status,
+    crl.m3_stepup_customer_flag,
+    crl.m3_cro_status,
+    score.stepup_value AS "Variable Step Up",
+    score.all_stepup_value,
+    score.all_segments AS "Segments",
+
+    -- Customer status at each time period
+    csub.customer_status_desc AS "Curr Customer Status",
+    lmsub.customer_status_desc AS "M-1 Customer Status",
+    m1sub.customer_status_desc AS "M1 Customer Status",
+    m2sub.customer_status_desc AS "M2 Customer Status",
+    m3sub.customer_status_desc AS "M3 Customer Status",
+
+    -- Active Customer MRC (zeroed out if not active)
+    CASE WHEN lmsub.customer_status_desc = 'Active' THEN crl.lm_total_net_mrc ELSE 0 END AS "M-1 Active Total Net MRC",
+    CASE WHEN csub.customer_status_desc = 'Active' THEN crl.total_net_mrc ELSE 0 END AS "Active M0 Total Net MRC",
+    CASE WHEN m1sub.customer_status_desc = 'Active' THEN crl.m1_total_net_mrc ELSE 0 END AS "Active M1 Total Net MRC",
+    CASE WHEN m2sub.customer_status_desc = 'Active' THEN crl.m2_total_net_mrc ELSE 0 END AS "Active M2 Total Net MRC",
+    CASE WHEN m3sub.customer_status_desc = 'Active' THEN crl.m3_total_net_mrc ELSE 0 END AS "Active M3 Total Net MRC",
+
+    -- Active Customer Non-Mobile MRC (sum of data + phone + video + home security)
+    CASE WHEN lmsub.customer_status_desc = 'Active' THEN
+        crl.lm_data_net_mrc + crl.lm_phone_net_mrc + crl.lm_video_net_mrc + crl.lm_homesec_net_mrc
+        ELSE 0 END AS "M-1 Active Non-Mobile Net MRC",
+    CASE WHEN csub.customer_status_desc = 'Active' THEN
+        crl.data_net_mrc + crl.phone_net_mrc + crl.video_net_mrc + crl.homesec_net_mrc
+        ELSE 0 END AS "M0 Active Non-Mobile Net MRC",
+    CASE WHEN m1sub.customer_status_desc = 'Active' THEN
+        crl.m1_data_net_mrc + crl.m1_phone_net_mrc + crl.m1_video_net_mrc + crl.m1_homesec_net_mrc
+        ELSE 0 END AS "M1 Active Non-Mobile Net MRC",
+    CASE WHEN m2sub.customer_status_desc = 'Active' THEN
+        crl.m2_data_net_mrc + crl.m2_phone_net_mrc + crl.m2_video_net_mrc + crl.m2_homesec_net_mrc
+        ELSE 0 END AS "M2 Active Non-Mobile Net MRC",
+    CASE WHEN m3sub.customer_status_desc = 'Active' THEN
+        crl.m3_data_net_mrc + crl.m3_phone_net_mrc + crl.m3_video_net_mrc + crl.m3_homesec_net_mrc
+        ELSE 0 END AS "M3 Active Non-Mobile Net MRC",
+
+    -- Active Customer Flags (1/0)
+    CASE WHEN lmsub.customer_status_desc = 'Active' THEN 1 ELSE 0 END AS "M-1 Customers",
+    CASE WHEN csub.customer_status_desc = 'Active' THEN 1 ELSE 0 END AS "Active M0 Customers",
+    CASE WHEN m1sub.customer_status_desc = 'Active' THEN 1 ELSE 0 END AS "Active M1 Customers",
+    CASE WHEN m2sub.customer_status_desc = 'Active' THEN 1 ELSE 0 END AS "Active M2 Customers",
+    CASE WHEN m3sub.customer_status_desc = 'Active' THEN 1 ELSE 0 END AS "Active M3 Customers",
+
+    -- MRC Change Columns (relative to M-1)
+    "Active M0 Total Net MRC" - "M-1 Active Total Net MRC" AS "M0 MRC Change",
+    "Active M1 Total Net MRC" - "M-1 Active Total Net MRC" AS "M1 MRC Change",
+    "Active M2 Total Net MRC" - "M-1 Active Total Net MRC" AS "M2 MRC Change",
+    "Active M3 Total Net MRC" - "M-1 Active Total Net MRC" AS "M3 MRC Change",
+
+    -- Non-Mobile MRC Change Columns
+    "M0 Active Non-Mobile Net MRC" - "M-1 Active Non-Mobile Net MRC" AS "Non-Mobile M0 MRC Change",
+    "M1 Active Non-Mobile Net MRC" - "M-1 Active Non-Mobile Net MRC" AS "Non-Mobile M1 MRC Change",
+    "M2 Active Non-Mobile Net MRC" - "M-1 Active Non-Mobile Net MRC" AS "Non-Mobile M2 MRC Change",
+    "M3 Active Non-Mobile Net MRC" - "M-1 Active Non-Mobile Net MRC" AS "Non-Mobile M3 MRC Change",
+
+    -- PSU (Product/Service Unit) Combo tracking across months
+    lmpsu.psu_combo AS "M-1 PSU Combo",
+    lmpsu.nbr_psus AS "M-1 Num of PSUs",
+    m0psu.psu_combo AS "M0 PSU Combo",
+    m0psu.nbr_psus AS "M0 Num of PSUs",
+    m1psu.psu_combo AS "M1 PSU Combo",
+    m1psu.nbr_psus AS "M1 Num of PSUs",
+    m2psu.psu_combo AS "M2 PSU Combo",
+    m2psu.nbr_psus AS "M2 Num of PSUs",
+    m3psu.psu_combo AS "M3 PSU Combo",
+    m3psu.nbr_psus AS "M3 Num of PSUs",
+
+    -- Seasonal customer flag
+    CASE
+        WHEN cust.customer_category_cd IN ('L', '2') THEN 1 ELSE 0
+    END AS "Seasonal Flag",
+
+    -- Propensity score percentile from scoring model
+    score.percentile,
+
+    -- A/B Test Segment Assignment
+    -- Assigns customers to test/control groups at different step-up price points
+    -- based on their percentile score and segment membership
+    CASE
+        -- Low-tier step-up: Test
+        WHEN score.percentile BETWEEN 0 AND 18
+             AND "Segments" = '<segment_prefix>~<eligible_on_campaign_test>'
+             THEN '$5 Step Up Test Group'
+        WHEN score.percentile BETWEEN 0 AND 49
+             AND "Segments" = '<segment_prefix>~<eligible_not_on_campaign_test>'
+             THEN '$5 Step Up Test Group'
+
+        -- Low-tier step-up: Control
+        WHEN score.percentile BETWEEN 0 AND 18
+             AND "Segments" = '<segment_prefix>~<eligible_on_campaign_control>'
+             THEN '$5 Step Up Control Group'
+        WHEN score.percentile BETWEEN 0 AND 49
+             AND "Segments" = '<segment_prefix>~<eligible_not_on_campaign_control>'
+             THEN '$5 Step Up Control Group'
+
+        -- Mid-tier step-up: Test
+        WHEN score.percentile BETWEEN 19 AND 69
+             AND "Segments" = '<segment_prefix>~<eligible_on_campaign_test>'
+             THEN '$10 Step Up Test Group'
+        WHEN score.percentile BETWEEN 50 AND 89
+             AND "Segments" = '<segment_prefix>~<eligible_not_on_campaign_test>'
+             THEN '$10 Step Up Test Group'
+        WHEN score.percentile BETWEEN 0 AND 39
+             AND "Segments" = '<segment_prefix>~<non_eligible_test>'
+             THEN '$10 Step Up Test Group'
+
+        -- Mid-tier step-up: Control
+        WHEN score.percentile BETWEEN 19 AND 69
+             AND "Segments" = '<segment_prefix>~<eligible_on_campaign_control>'
+             THEN '$10 Step Up Control Group'
+        WHEN score.percentile BETWEEN 50 AND 89
+             AND "Segments" = '<segment_prefix>~<eligible_not_on_campaign_control>'
+             THEN '$10 Step Up Control Group'
+        WHEN score.percentile BETWEEN 0 AND 39
+             AND "Segments" = '<segment_prefix>~<non_eligible_control>'
+             THEN '$10 Step Up Control Group'
+
+        -- High-tier step-up: Test
+        WHEN score.percentile BETWEEN 70 AND 99
+             AND "Segments" = '<segment_prefix>~<eligible_on_campaign_test>'
+             THEN '$20 Step Up Test Group'
+        WHEN score.percentile BETWEEN 90 AND 99
+             AND "Segments" = '<segment_prefix>~<eligible_not_on_campaign_test>'
+             THEN '$20 Step Up Test Group'
+        WHEN score.percentile BETWEEN 40 AND 49
+             AND "Segments" = '<segment_prefix>~<non_eligible_test>'
+             THEN '$20 Step Up Test Group'
+
+        -- High-tier step-up: Control
+        WHEN score.percentile BETWEEN 70 AND 99
+             AND "Segments" = '<segment_prefix>~<eligible_on_campaign_control>'
+             THEN '$20 Step Up Control Group'
+        WHEN score.percentile BETWEEN 90 AND 99
+             AND "Segments" = '<segment_prefix>~<eligible_not_on_campaign_control>'
+             THEN '$20 Step Up Control Group'
+        WHEN score.percentile BETWEEN 40 AND 49
+             AND "Segments" = '<segment_prefix>~<non_eligible_control>'
+             THEN '$20 Step Up Control Group'
+
+        -- Premium-tier step-up: Test
+        WHEN score.percentile BETWEEN 50 AND 99
+             AND "Segments" = '<segment_prefix>~<non_eligible_test>'
+             THEN '$40 Step Up Test Group'
+
+        -- Premium-tier step-up: Control
+        WHEN score.percentile BETWEEN 50 AND 99
+             AND "Segments" = '<segment_prefix>~<non_eligible_control>'
+             THEN '$40 Step Up Control Group'
+
+        ELSE 'Other'
+    END AS segment_group,
+
+    car.easy_pay_flag,
+    sit.site_desc AS "Site",
+    sub.sub_system_desc AS "Sub System",
+
+    -- Service flag: 1 if customer has any qualifying campaign code
+    CASE
+        WHEN car.curr_campaign_cd_strg LIKE '%<CAMPAIGN_CODE_1>%'
+          OR car.curr_campaign_cd_strg LIKE '%<CAMPAIGN_CODE_2>%'
+          -- ... additional campaign codes omitted for brevity
+          -- In production, this checks ~40 campaign code patterns
+        THEN 1 ELSE 0
+    END AS service_flag,
+
+    -- Service tier grouping based on TE (tariff element) codes
+    CASE
+        WHEN car.curr_te_code_string LIKE '%<TIER6_ACQ>%'
+             OR car.curr_te_code_string LIKE '%<TIER6_RET>%' THEN 'Tier 6'
+        WHEN car.curr_te_code_string LIKE '%<TIER1_ACQ>%'
+             OR car.curr_te_code_string LIKE '%<TIER1_RET>%' THEN 'Tier 1'
+        WHEN car.curr_te_code_string LIKE '%<TIER2_ACQ>%'
+             OR car.curr_te_code_string LIKE '%<TIER2_RET>%' THEN 'Tier 2'
+        WHEN car.curr_te_code_string LIKE '%<TIER2_LITE>%' THEN 'Tier 2 - Lite'
+        WHEN car.curr_te_code_string LIKE '%<TIER3_ACQ>%'
+             OR car.curr_te_code_string LIKE '%<TIER3_RET>%' THEN 'Tier 3'
+        WHEN car.curr_te_code_string LIKE '%<TIER4_ACQ>%'
+             OR car.curr_te_code_string LIKE '%<TIER4_RET>%' THEN 'Tier 4'
+        WHEN car.curr_te_code_string LIKE '%<TIER4_LITE>%' THEN 'Tier 4 - Lite'
+        ELSE 'No Tier Group'
+    END AS eligible_group,
+
+    -- PSU Migration tracking across months
+    lmmig.migration_type AS "Last Month PSU Migration",
+    m0mig.migration_type AS "M0 PSU Migration",
+    m1mig.migration_type AS "M1 PSU Migration",
+    m2mig.migration_type AS "M2 PSU Migration",
+    m3mig.migration_type AS "M3 PSU Migration"
+
+FROM edw_db.edw_schema.cust_revenue_lifecycle_sum crl
+
+-- Customer dimension for account info and flags
+LEFT JOIN analytics_db.dim_schema.customer_dim_v cust
+    ON crl.customer_key = cust.customer_key
+
+-- Propensity scoring / CRO cap scores (joined on account + site)
+LEFT JOIN scoring_db.scoring_schema.cro_cap_score_hist score
+    ON cust.account_nbr = score.account_number
+    AND cust.site_id = score.site_id
+
+-- Customer substatus at each time period (current, M-1, M1, M2, M3)
+LEFT JOIN analytics_db.dim_schema.customer_substatus_dim csub
+    ON crl.customer_substatus_key = csub.customer_substatus_key
+LEFT JOIN analytics_db.dim_schema.customer_substatus_dim lmsub
+    ON crl.lm_customer_substatus_key = lmsub.customer_substatus_key
+LEFT JOIN analytics_db.dim_schema.customer_substatus_dim m1sub
+    ON crl.m1_customer_substatus_key = m1sub.customer_substatus_key
+LEFT JOIN analytics_db.dim_schema.customer_substatus_dim m2sub
+    ON crl.m2_customer_substatus_key = m2sub.customer_substatus_key
+LEFT JOIN analytics_db.dim_schema.customer_substatus_dim m3sub
+    ON crl.m3_customer_substatus_key = m3sub.customer_substatus_key
+
+-- Bill type dimension (filtering to standard billing)
+LEFT JOIN edw_db.edw_schema.bill_type_dim bt
+    ON crl.bill_type_key = bt.bill_type_key
+
+-- PSU (Product/Service Unit) combo dimensions across months
+LEFT JOIN analytics_db.dim_schema.psu_combo_dim_stg lmpsu
+    ON crl.lm_psu_combo_key = lmpsu.psu_combo_key
+LEFT JOIN analytics_db.dim_schema.psu_combo_dim_stg m0psu
+    ON crl.psu_combo_key = m0psu.psu_combo_key
+LEFT JOIN analytics_db.dim_schema.psu_combo_dim_stg m1psu
+    ON crl.m1_psu_combo_key = m1psu.psu_combo_key
+LEFT JOIN analytics_db.dim_schema.psu_combo_dim_stg m2psu
+    ON crl.m2_psu_combo_key = m2psu.psu_combo_key
+LEFT JOIN analytics_db.dim_schema.psu_combo_dim_stg m3psu
+    ON crl.m3_psu_combo_key = m3psu.psu_combo_key
+
+-- Monthly CAR (Customer Account Record) fact for campaign/TE codes
+LEFT JOIN reporting_db.reporting_schema.car_monthly_fact_v car
+    ON crl.customer_key = car.customer_key
+    AND crl.time_key = car.time_key
+
+-- Site dimension
+LEFT JOIN reporting_db.reporting_schema.site_dim_v sit
+    ON crl.site_key = sit.site_key
+
+-- Sub-system dimension
+LEFT JOIN reporting_db.reporting_schema.sub_system_dim_v sub
+    ON crl.sub_system_key = sub.sub_system_key
+
+-- PSU Migration dimensions across months
+LEFT JOIN edw_db.edw_schema.psu_migration_dim lmmig
+    ON crl.lm_psu_migration_key = lmmig.psu_migration_key
+LEFT JOIN edw_db.edw_schema.psu_migration_dim m0mig
+    ON crl.psu_migration_key = m0mig.psu_migration_key
+LEFT JOIN edw_db.edw_schema.psu_migration_dim m1mig
+    ON crl.m1_psu_migration_key = m1mig.psu_migration_key
+LEFT JOIN edw_db.edw_schema.psu_migration_dim m2mig
+    ON crl.m2_psu_migration_key = m2mig.psu_migration_key
+LEFT JOIN edw_db.edw_schema.psu_migration_dim m3mig
+    ON crl.m3_psu_migration_key = m3mig.psu_migration_key
+
+WHERE TO_DATE(cro_month) >= '2024-04-30'
+    -- Score date = last day of the month prior to CRO month
+    AND score.daily_time_key = LAST_DAY(DATEADD(MONTH, -1, TO_DATE(cro_month)))
+    -- Exclude employee/test accounts
+    AND cust.emp_test_acct_flag = 0
+    -- Standard billing only
+    AND bt.bill_type_cd = 'S';
